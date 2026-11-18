@@ -77,14 +77,44 @@ func TestQueryParameters(t *testing.T) {
 	}
 }
 
-func TestErrorCode(t *testing.T) {
+func TestErrorCodeAndDetails(t *testing.T) {
 	var seen []*http.Request
 	var bodies []string
-	c := server(t, []reply{{403, nil, `{"error":{"code":"plan_required","message":"Paid plan needed"}}`}}, &seen, &bodies)
-	_, err := c.GetAccount(context.Background())
+	c := server(t, []reply{{402, nil, `{"error":{"code":"insufficient_words","message":"Not enough API words","wordsNeeded":900,"wordsAvailable":100,"balances":{"purchasedWords":100},"billingUrl":"https://app.plagiarismcheckerplus.com/developers/billing"}}`}}, &seen, &bodies)
+	_, err := c.CreateScan(context.Background(), "text", []string{ToolPlagiarism}, "")
 	var apiErr *Error
-	if !errors.As(err, &apiErr) || apiErr.Status != 403 || apiErr.Code != CodePlanRequired {
+	if !errors.As(err, &apiErr) || apiErr.Status != 402 || apiErr.Code != CodeInsufficientWords {
 		t.Fatalf("got %v", err)
+	}
+	d := apiErr.Details
+	if d.WordsNeeded != 900 || d.WordsAvailable != 100 || d.BillingURL == "" || d.Balances == nil || d.Balances.PurchasedWords != 100 {
+		t.Fatalf("bad details %+v", d)
+	}
+	if apiErr.Message != "Not enough API words" {
+		t.Fatalf("bad message %q", apiErr.Message)
+	}
+	if CodeTrialExhausted != "trial_exhausted" || CodeKeyCapReached != "key_cap_reached" || CodePlanRequired != "plan_required" {
+		t.Fatal("bad code constants")
+	}
+}
+
+func TestAccountAndSandbox(t *testing.T) {
+	var seen []*http.Request
+	var bodies []string
+	c := server(t, []reply{
+		{200, nil, `{"id":"u1","plan":"free","trial":{"wordsTotal":2000,"wordsUsed":500,"wordsRemaining":1500},"balances":{"apiPlan":null,"appPlan":null,"purchasedWords":0,"trialRemaining":1500,"totalAvailable":1500},"key":{"mode":"test","monthlyWordCap":null,"wordsUsedThisMonth":0},"limits":{"maxDocumentWords":1000,"requestsPerMinute":10}}`},
+		{200, nil, `{"id":"sbx_1","status":"completed","sandbox":true}`},
+	}, &seen, &bodies)
+	acct, err := c.GetAccount(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if acct.Trial == nil || acct.Trial.WordsRemaining != 1500 || acct.Balances == nil || acct.Balances.TotalAvailable != 1500 || acct.Key == nil || acct.Key.Mode != "test" || acct.Limits.RequestsPerMinute != 10 {
+		t.Fatalf("bad account %+v", acct)
+	}
+	scan, err := c.GetScan(context.Background(), "sbx_1", false)
+	if err != nil || !scan.Sandbox {
+		t.Fatalf("got %+v, %v", scan, err)
 	}
 }
 

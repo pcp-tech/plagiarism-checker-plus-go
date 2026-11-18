@@ -1,6 +1,10 @@
 // Package plagiarismcheckerplus is the official Go client for the Plagiarism
 // Checker Plus API: plagiarism checks with sources and AI writing detection.
-// The API needs a paid plan; a free-plan key returns 403 plan_required.
+//
+// Get a free API key at https://app.plagiarismcheckerplus.com/developers.
+// Test keys (pcp_test_...) are free and unlimited and return sample results
+// marked Sandbox; free accounts also get 2,000 live API words once. Pricing:
+// https://plagiarismcheckerplus.com/api-pricing.
 package plagiarismcheckerplus
 
 import (
@@ -21,23 +25,67 @@ const (
 	// DefaultBaseURL is the production API.
 	DefaultBaseURL = "https://app.plagiarismcheckerplus.com/api/public/v1"
 	// Version of this library.
-	Version = "1.0.0"
+	Version = "1.1.0"
 
-	CodePlanRequired     = "plan_required"
-	CodeTextTooShort     = "text_too_short"
-	CodeDocTooLong       = "doc_too_long"
+	// CodePlanRequired is no longer returned: free accounts get a free API
+	// trial and free test keys.
+	//
+	// Deprecated: kept so existing code still compiles.
+	CodePlanRequired = "plan_required"
+	CodeTextTooShort = "text_too_short"
+	CodeDocTooLong   = "doc_too_long"
+	// CodeInsufficientWords (402): not enough words across all sources.
+	// Error.Details has WordsNeeded, WordsAvailable, Balances and BillingURL.
 	CodeInsufficientWords = "insufficient_words"
+	// CodeTrialExhausted (402): the free API trial cannot cover the request.
+	// Error.Details has WordsNeeded, TrialRemaining, TrialTotal and BillingURL.
+	CodeTrialExhausted = "trial_exhausted"
+	// CodeKeyCapReached (402): the key's monthly word cap would be exceeded.
+	// Error.Details has WordsNeeded, MonthlyWordCap and UsedThisMonth.
+	CodeKeyCapReached      = "key_cap_reached"
+	CodeInvalidRequest     = "invalid_request"
+	CodeInvalidJSON        = "invalid_json"
+	CodeUnauthorized       = "unauthorized"
+	CodeInvalidAPIKey      = "invalid_api_key"
+	CodeKeyRevoked         = "key_revoked"
+	CodeEmailUnverified    = "email_unverified"
+	CodeForbidden          = "forbidden"
+	CodeNotFound           = "not_found"
+	CodeRateLimited        = "rate_limited"
+	CodeWorkersUnavailable = "workers_unavailable"
+	CodeInternalError      = "internal_error"
 
 	ToolPlagiarism = "plagiarism"
 	ToolAIDetect   = "ai_detect"
 )
 
-// Error is a non-2xx response. Code is the API's error code, such as plan_required.
+// ErrorDetails holds the detail fields some errors carry (402 errors in
+// particular). Fields an error does not send are zero.
+type ErrorDetails struct {
+	WordsNeeded    int    `json:"wordsNeeded"`
+	WordsAvailable int    `json:"wordsAvailable"`
+	BillingURL     string `json:"billingUrl"`
+	TrialRemaining int    `json:"trialRemaining"`
+	TrialTotal     int    `json:"trialTotal"`
+	MonthlyWordCap int    `json:"monthlyWordCap"`
+	UsedThisMonth  int    `json:"usedThisMonth"`
+	// Balances: what each source could still pay (insufficient_words).
+	Balances *struct {
+		APIPlanRemaining    int `json:"apiPlanRemaining"`
+		AppMonthlyRemaining int `json:"appMonthlyRemaining"`
+		AppBonusBalance     int `json:"appBonusBalance"`
+		PurchasedWords      int `json:"purchasedWords"`
+		TrialRemaining      int `json:"trialRemaining"`
+	} `json:"balances"`
+}
+
+// Error is a non-2xx response. Code is the API's error code, such as insufficient_words.
 type Error struct {
 	Status     int
 	Code       string
 	Message    string
 	RetryAfter time.Duration // zero when not sent
+	Details    ErrorDetails
 	Body       []byte
 }
 
@@ -107,6 +155,8 @@ type CreateScanResponse struct {
 	WordCount    int      `json:"wordCount"`
 	WordsCharged int      `json:"wordsCharged"`
 	Tools        []string `json:"tools"`
+	// Sandbox is true for scans made with a test key.
+	Sandbox bool `json:"sandbox"`
 }
 
 // ScanSummary is one scan in a list.
@@ -119,6 +169,9 @@ type ScanSummary struct {
 	Tools        []string `json:"tools"`
 	CreatedAt    string   `json:"createdAt"`
 	CompletedAt  *string  `json:"completedAt"`
+	// Sandbox is true for scans made with a test key (pcp_test_...):
+	// fixed sample results, nothing checked or charged.
+	Sandbox bool `json:"sandbox"`
 }
 
 // Source is a page that matched part of the text.
@@ -175,19 +228,74 @@ type ScanList struct {
 	} `json:"pagination"`
 }
 
+// AccountTrial is the one-time free API trial (2,000 words) of a free account.
+type AccountTrial struct {
+	WordsTotal     int `json:"wordsTotal"`
+	WordsUsed      int `json:"wordsUsed"`
+	WordsRemaining int `json:"wordsRemaining"`
+}
+
+// AccountBalances is what live API requests can draw on, in charging order.
+type AccountBalances struct {
+	APIPlan *struct {
+		Plan              string  `json:"plan"`
+		Name              string  `json:"name"`
+		Status            string  `json:"status"`
+		WordsLimit        int     `json:"wordsLimit"`
+		WordsUsed         int     `json:"wordsUsed"`
+		WordsRemaining    int     `json:"wordsRemaining"`
+		PeriodEnd         *string `json:"periodEnd"`
+		CancelAtPeriodEnd bool    `json:"cancelAtPeriodEnd"`
+	} `json:"apiPlan"`
+	AppPlan *struct {
+		Plan             string `json:"plan"`
+		MonthlyRemaining int    `json:"monthlyRemaining"`
+		BonusBalance     int    `json:"bonusBalance"`
+	} `json:"appPlan"`
+	PurchasedWords int `json:"purchasedWords"`
+	TrialRemaining int `json:"trialRemaining"`
+	TotalAvailable int `json:"totalAvailable"`
+}
+
+// AccountAutoTopup is the auto top-up status.
+type AccountAutoTopup struct {
+	Enabled           bool     `json:"enabled"`
+	ThresholdWords    *int     `json:"thresholdWords"`
+	TopupWords        *int     `json:"topupWords"`
+	MonthlyCapUSD     *float64 `json:"monthlyCapUsd"`
+	SpentThisMonthUSD float64  `json:"spentThisMonthUsd"`
+	LastStatus        *string  `json:"lastStatus"`
+}
+
+// AccountKey describes the calling key.
+type AccountKey struct {
+	Mode               string `json:"mode"` // "live" or "test"
+	MonthlyWordCap     *int   `json:"monthlyWordCap"`
+	WordsUsedThisMonth int    `json:"wordsUsedThisMonth"`
+}
+
 // Account is the body of GET /account.
 type Account struct {
 	ID    string `json:"id"`
 	Email string `json:"email"`
 	Plan  string `json:"plan"`
+	// Words are the app plan's words.
 	Words struct {
 		MonthlyLimit     int `json:"monthlyLimit"`
 		MonthlyUsed      int `json:"monthlyUsed"`
 		MonthlyRemaining int `json:"monthlyRemaining"`
 		BonusBalance     int `json:"bonusBalance"`
 	} `json:"words"`
-	Limits struct {
-		MaxDocumentWords *int `json:"maxDocumentWords"`
+	// Trial is nil on paid app plans, which never use it.
+	Trial     *AccountTrial     `json:"trial"`
+	Balances  *AccountBalances  `json:"balances"`
+	AutoTopup *AccountAutoTopup `json:"autoTopup"`
+	Key       *AccountKey       `json:"key"`
+	// BillingURL is where to buy API words or choose an API plan.
+	BillingURL string `json:"billingUrl"`
+	Limits     struct {
+		MaxDocumentWords  *int `json:"maxDocumentWords"`
+		RequestsPerMinute int  `json:"requestsPerMinute"`
 	} `json:"limits"`
 	MonthlyResetAt *string `json:"monthlyResetAt"`
 }
@@ -235,10 +343,12 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 			Error struct {
 				Code    string `json:"code"`
 				Message string `json:"message"`
+				ErrorDetails
 			} `json:"error"`
 		}
 		if json.Unmarshal(raw, &envelope) == nil {
 			apiErr.Code = envelope.Error.Code
+			apiErr.Details = envelope.Error.ErrorDetails
 			if envelope.Error.Message != "" {
 				apiErr.Message = envelope.Error.Message
 			}
@@ -293,7 +403,8 @@ func (c *Client) ListScans(ctx context.Context, page, limit int) (*ScanList, err
 	return &out, nil
 }
 
-// GetAccount returns the plan and remaining words.
+// GetAccount returns the plan, word balances, free API trial, auto top-up
+// status and the calling key's mode and monthly cap.
 func (c *Client) GetAccount(ctx context.Context) (*Account, error) {
 	var out Account
 	if err := c.do(ctx, http.MethodGet, "/account", nil, nil, &out); err != nil {
