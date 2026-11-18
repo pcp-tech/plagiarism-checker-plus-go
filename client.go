@@ -3,7 +3,7 @@
 //
 // Get a free API key at https://app.plagiarismcheckerplus.com/developers.
 // Test keys (pcp_test_...) are free and unlimited and return sample results
-// marked Sandbox; free accounts also get 2,000 live API words once. Pricing:
+// marked Sandbox; free accounts also get 5,000 live API words once. Pricing:
 // https://plagiarismcheckerplus.com/api-pricing.
 package plagiarismcheckerplus
 
@@ -228,7 +228,7 @@ type ScanList struct {
 	} `json:"pagination"`
 }
 
-// AccountTrial is the one-time free API trial (2,000 words) of a free account.
+// AccountTrial is the one-time free API trial (5,000 words) of a free account.
 type AccountTrial struct {
 	WordsTotal     int `json:"wordsTotal"`
 	WordsUsed      int `json:"wordsUsed"`
